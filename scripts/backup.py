@@ -1,6 +1,7 @@
 """Coherent database + immutable uploads archive; no credentials in filenames/logs."""
 import argparse
 import datetime
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -26,14 +27,16 @@ def backup(destination):
         (snapshot / 'uploads').mkdir()
         for storage in files:
             shutil.copy2(app.DATA / 'uploads' / storage, snapshot / 'uploads' / storage)
+        with tempfile.NamedTemporaryFile(dir=destination.parent, prefix='.workforce-', suffix='.partial', delete=False) as pending:
+            pending_path = Path(pending.name)
         try:
-            with tarfile.open(destination, 'x:gz') as archive:
+            with tarfile.open(pending_path, 'w:gz') as archive:
                 archive.add(snapshot / 'hub.sqlite3', arcname='hub.sqlite3')
                 archive.add(snapshot / 'uploads', arcname='uploads')
-            destination.chmod(0o600)
-        except Exception:
-            destination.unlink(missing_ok=True)
-            raise
+            # Publishing is atomic and refuses to replace an existing archive.
+            os.link(pending_path, destination)
+        finally:
+            pending_path.unlink(missing_ok=True)
     return destination
 
 

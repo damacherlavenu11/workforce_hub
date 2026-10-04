@@ -167,6 +167,9 @@ class WorkflowTests(unittest.TestCase):
         self.request('/api/upload',session=employee,headers={'X-Filename':'contract.txt'},raw=b'contract')
         destination=Path(self.temp.name)/'archive.tar.gz'
         backup(destination)
+        original=destination.read_bytes()
+        with self.assertRaises(FileExistsError):backup(destination)
+        self.assertEqual(destination.read_bytes(),original)
         with tarfile.open(destination) as archive:
             with tempfile.TemporaryDirectory() as restore:
                 archive.extractall(restore)
