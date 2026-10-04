@@ -1,0 +1,28 @@
+# Live single-company deployment. This creates a PAID 4 GB service.
+# Review pricing and connect your account before applying this Blueprint.
+services:
+  - type: web
+    name: workforce-hub
+    runtime: docker
+    plan: pro
+    region: ohio
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: checksPass
+    disk:
+      name: workforce-data
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: WORKFORCE_ENV
+        value: production
+      - key: WORKFORCE_DATA
+        value: /var/data
+      - key: PUBLIC_ORIGIN
+        sync: false
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DOCUMENT_SCANNER
+        value: "clamscan --no-summary --fail-if-cvd-older-than=2 --alert-exceeds-max=yes --max-filesize=11M --max-scansize=100M --max-recursion=16 --max-files=1000"

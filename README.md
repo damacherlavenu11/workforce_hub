@@ -1,57 +1,62 @@
 # Workforce Hub
 
-Employee and manager portal for private documents and weekly timesheet approvals. Suggested repository name: `workforce-hub`.
+Single-company employee and employer portal for weekly timesheet approvals, employee invitations and private documents.
 
-## Start locally
+## Local development
 
-Requires Python 3.9 or newer; no dependencies to install.
-
-```sh
-python3 app.py --create-user
-```
-
-Create the first employer/manager account using this command. Then sign in and use **Employees** to onboard employees. The employer is represented by the manager role in this single-company MVP. Employees do not sign up publicly or receive shared passwords. Passwords require at least 12 characters; users cannot grant themselves manager access.
+Python 3.9+ is supported locally. Deployment and CI use Python 3.12.
 
 ```sh
-python3 app.py
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python app.py --create-user
+python app.py
 ```
 
-Open http://localhost:8000. Use `--port 8001` to change the port.
+Choose the `manager` role for the first employer. Open http://localhost:8000. Existing SQLite data is migrated automatically; existing password hashes are upgraded on successful login. Existing users retain their roles and passwords. Sessions created by the old prototype require signing in again.
 
-## Sign-in troubleshooting
+There are no built-in production accounts. Local demo credentials and local documents are never included in Git or container builds.
 
-There are no default accounts or passwords. Create the first manager with `python3 app.py --create-user`, choosing the `manager` role, then start or restart `python3 app.py`. Invited employees must set their password through their invitation before signing in. Emails ignore capitalization and surrounding spaces; passwords are case-sensitive and preserve spaces. Use the **eye icon** inside the password field to check what you typed. Sign-in and activation failures appear as red toast notifications.
+## Employee workflow
 
-## Employee onboarding
+Employers open **Employees**, enter a name and email, then share a 48-hour, one-use invitation. Employees choose their passwords and sign in on the same page; their role determines their workspace. Invitations can be regenerated. **Disable access** immediately revokes an employee's sessions and invitations while retaining records.
 
-1. The employer signs in and opens **Employees**.
-2. Enter the employee's name and email, then click **Create invitation**.
-3. Copy the invitation link, or use **Open email draft** and send it from your email client. The app does not send email automatically; no email delivery service is configured.
-4. The employee opens the link, chooses and confirms their password, then signs in with their email.
+Employees save seven daily hours for Monday-starting weeks, submit them, and view approval status. Managers approve submitted weeks or return them with a correction note. Monthly summaries count the days within the selected month; approval remains weekly.
 
-Invitations expire after 48 hours and can only be used once. Pending accounts cannot sign in. Use **New invitation** for pending or expired invitations; this invalidates the old link. Only token hashes are stored in SQLite. Employers cannot invite another employer through the employee onboarding screen.
+Employees can only view their own data. Managers can view all records within this single-company installation. This deployment is not a multi-company SaaS: use a separate installation for each company until tenant isolation is implemented.
 
-The app currently runs on localhost, so invitation links are only usable on the machine running it. A deployed HTTPS URL is needed for employees on other machines. Automatic email delivery can be connected to a transactional email provider in a later step.
+Both roles can change passwords from **Account settings**. For forgotten passwords, an authorized deployment operator runs:
 
-## Workflows
+```sh
+python app.py --reset-password
+```
 
-- Employees enter seven daily hours for a Monday-starting week, save drafts, and submit for approval.
-- Submitted and approved weeks are locked. Managers review daily hours, approve submissions, or return them with a correction note. Returned weeks can be edited and resubmitted.
-- Both roles upload and download their documents. Managers can view all employees' documents and timesheets in this single-company MVP.
-- Month filters include weeks overlapping a month, and monthly recorded hours count only days inside that month. Approval is per week in this version; independent monthly approval is a future extension.
+The password prompt hides input and all sessions for that account are revoked. Email delivery and self-service forgotten-password emails are not integrated; invitations currently use copy-link/email-draft sharing.
 
-SQLite records and uploaded files are stored under `data/` and excluded from Git. Set `WORKFORCE_DATA` to change the storage directory. Back up the database and uploads together.
+## Technology
+
+- Frontend: responsive HTML, CSS and JavaScript, hosted at `/`.
+- Backend: Flask JSON endpoints at `/api/*`, run by Gunicorn in production.
+- Data: SQLite with write-ahead logging and transactional workflows, on a persistent disk.
+- Files: private randomized storage paths, authenticated downloads, content validation and required malware scanning in production.
+- Deployment: Docker, Render Blueprint and GitHub Actions checks.
+
+The frontend and backend are both remote after deployment and share one HTTPS origin. Separate services/domains are unnecessary for this initial deployment and would require additional cookie/CORS configuration.
 
 ## Validation
 
 ```sh
-python3 -m unittest discover -s tests -v
+python -m unittest discover -s tests -v
+node --check static/app.js
 ```
 
-## Architecture and next steps
+Tests cover onboarding, employee isolation, approvals, malformed requests, login limits, secure cookies, password upgrades/resets, offboarding, scanner failures, and a backup restore. Scanner unit tests mock the process result; the CI container check separately exercises a real ClamAV executable using a local test signature.
 
-The Python HTTP server serves a responsive vanilla JavaScript interface and JSON endpoints. Authentication uses salted PBKDF2 password hashes, expiring server-side sessions, HttpOnly/SameSite cookies and CSRF tokens. Files have randomized storage names and authenticated downloads. Employees can access only their own records.
+## Deploy and operate
 
-This is a local development MVP, bound to localhost. Before internet deployment, replace the development server with a production service, enforce HTTPS and Secure cookies, add login rate limiting or managed identity, define company/team boundaries, add audit logs, malware scanning, encrypted backups and document retention policies. File extensions are restricted, but file contents are not scanned. Managers currently have access to every employee in this installation. Do not use real sensitive employee documents until production security and access rules are in place.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the Render configuration, estimated costs, account setup, deployment validation, and backup/restore procedure. The deployment files are a candidate configuration; a successful local test is not proof that the remote service is ready. Complete the remote checks before live onboarding.
 
-Possible production stack: React/Next.js UI, a Python or Node API, PostgreSQL, private S3-compatible document storage, and managed authentication. The current workflow provides a runnable starting point for those decisions.
+Production adds HTTPS enforcement, Secure/HttpOnly/SameSite cookies, hashed session tokens, CSRF/origin validation, database-backed request limits, audit events and security headers. Gunicorn uses one worker and four threads; scans are serialized to bound memory. Do not increase worker or instance counts without moving shared storage and scan coordination out of the process.
+
+SQLite records, uploads and daily archives live under `WORKFORCE_DATA`; local `data/` is ignored by Git. Monitor disk usage and logs, review access periodically, set company retention rules, and maintain an independent encrypted backup export. Antivirus reduces risk but does not guarantee every document is safe. No public upload directory is exposed.

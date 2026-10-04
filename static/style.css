@@ -3,3 +3,5 @@
 .invite-form{display:flex;gap:16px;align-items:end;flex-wrap:wrap}.invite-form label{flex:1;min-width:200px}.invite-result{margin-top:24px;padding:20px;border:1px solid #c9dece;border-radius:10px;background:#f5faf6}.invite-result a{color:#236b50;font-weight:600}.invite-result input{width:100%}
 
 .password-field{display:grid;gap:8px}.password-control{position:relative}.password-control input{width:100%;min-width:0;padding-right:52px}.password-toggle{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:44px;height:40px;padding:0;display:grid;place-items:center;background:transparent;color:#687b70;border-radius:6px}.password-toggle:hover{background:#edf2ee;color:#236b50}.password-toggle:focus-visible{outline-offset:-3px}.form-error{color:#b42318;background:#fff0ee;border:1px solid #f3b4ac;border-radius:8px;padding:12px;margin:0;font-size:14px;line-height:1.5}.form-error:empty{display:none}#notice.error{background:#b42318;color:#fff;border:1px solid #8f1c13;box-shadow:0 6px 24px #b4231830}
+
+.account-form{display:grid;gap:20px;max-width:450px;margin-top:24px}
