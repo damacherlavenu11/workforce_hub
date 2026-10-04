@@ -40,7 +40,7 @@ The password prompt hides input and all sessions for that account are revoked. E
 
 - Frontend: responsive HTML, CSS and JavaScript, hosted at `/`.
 - Backend: Flask JSON endpoints at `/api/*`, run by Gunicorn in production.
-- Data: local SQLite, or hosted PostgreSQL in a private schema for the free pilot.
+- Data: local SQLite, or hosted Neon/PostgreSQL in a private schema for the free pilot.
 - Files: local private paths or private Supabase objects, with authenticated downloads. Production uploads require malware scanning.
 - Deployment: Docker, Render Blueprint and GitHub Actions checks.
 
@@ -61,6 +61,6 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the Render configuration, estimated costs
 
 Production adds HTTPS enforcement, Secure/HttpOnly/SameSite cookies, hashed session tokens, CSRF/origin validation, database-backed request limits, audit events and security headers. Gunicorn uses one worker and four threads; scans are serialized to bound memory. Do not increase worker or instance counts without moving shared storage and scan coordination out of the process.
 
-The default `render.yaml` selects free Render hosting with Supabase persistence. The prior paid configuration is in `render.paid.yaml`. Free hosting can sleep or pause and requires manual backup exports.
+The default `render.yaml` selects free Render hosting with Neon/PostgreSQL persistence. The prior paid configuration is in `render.paid.yaml`. Free hosting can sleep or pause and requires manual backup exports.
 
 Local SQLite records and uploads live under `WORKFORCE_DATA`; local `data/` is ignored by Git. With `DATABASE_URL` configured, accounts and timesheets use PostgreSQL. With Supabase storage configured, committed documents use the private bucket; the temporary app filesystem is never the authoritative remote store. The local SQLite backup scheduler runs only for the paid/local storage mode. Monitor disk usage and logs, review access periodically, set company retention rules, and maintain an independent encrypted backup export. Antivirus reduces risk but does not guarantee every document is safe. No public upload directory is exposed.

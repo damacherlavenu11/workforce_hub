@@ -1,89 +1,126 @@
-# Free pilot deployment
+# Free Render + Neon pilot
 
-The default `render.yaml` now uses **Render Free**, with no paid disk. Accounts and timesheets are stored in **Supabase PostgreSQL**, outside Render's temporary filesystem. A private Supabase bucket is configured for future document storage; **uploads remain disabled until a malware scanner is available**, as requested.
+The default `render.yaml` deploys one **Render Free** web service using `Dockerfile.free`. Both the frontend and backend use the same HTTPS URL. Accounts, invitations, timesheets, sessions and audit records live in **Neon PostgreSQL**. Document uploads remain disabled until malware scanning and private object storage are available. Supabase is optional for future file storage and is not required for this pilot.
 
-No cloud resources have been created. Connect your Render and Supabase accounts to deploy. Choose Free plans; this configuration does not provision paid resources or automatically upgrade them.
+No cloud resources have been created by these configuration changes.
 
-## Free-tier limits
+## 1. Create the Neon database
 
-As verified when preparing this configuration:
+1. Sign in to https://console.neon.tech and create a project on the Free plan.
+2. Name the project `workforce-hub`. Choose a region close to your Render service.
+3. Use the default database (`neondb`) and role, or create your own database named `workforce_hub`.
+4. Click **Connect**. Select the desired branch, database and role.
+5. For this small pilot, disable **Connection pooling** and copy the **direct PostgreSQL connection string**. This preserves the startup `search_path` option used by the current database adapter. Retain `sslmode=require` and any supplied `channel_binding` parameter.
+6. Keep the connection string private. It contains the database password; do not commit it or paste it into chat.
 
-- Render Free sleeps after 15 minutes without inbound traffic, so the first visit may take longer. It has an ephemeral filesystem; the application refuses to start in free production mode without remote persistence.
-- Supabase Free includes a 500 MB database and 1 GB file storage. Projects with low activity can pause after seven days and require restoration from the dashboard.
-- Free hosting does not offer the uptime guarantees or capacity of a paid deployment. Keep this to a small pilot and monitor provider quotas.
-- Automatic email delivery is not configured; invitations are shared manually.
-- The free app image excludes ClamAV. Content checks remain implemented, but production uploads stay disabled instead of silently skipping malware scanning.
+Example shape only:
 
-References:
+```text
+postgresql://ROLE:PASSWORD@NEON_HOST/neondb?sslmode=require
+```
 
-- https://render.com/docs/free
-- https://supabase.com/docs/guides/platform/billing-on-supabase
-- https://supabase.com/docs/guides/platform/free-project-pausing
+No tables need to be created manually. The backend initializes a private `workforce` schema on first startup. The selected role must be allowed to create that schema and its tables.
 
-## Create the Supabase project
+## 2. Create the Render project and web service
 
-1. In your own Supabase account, create a project on the **Free** plan, using a strong database password. Choose a nearby region.
-2. Create a **private** Storage bucket named `workforce-documents`. Do not mark it public and do not add public access policies. The backend verifies the private setting before startup.
-3. Copy the IPv4-compatible **session pooler** PostgreSQL connection string (port 5432) from the Connect dialog. URL-encode the database password and retain `sslmode=require`.
-4. Record the project URL and **server-only service-role key**. These are backend environment variables; never put them into `static/app.js`, Git, screenshots or chat messages.
-5. The app creates tables in a private `workforce` database schema and revokes public/anonymous schema access. Do not add this schema to Supabase's exposed Data API schemas. Authentication remains in our backend; Supabase Auth signup is not used.
+Starting at the dashboard shown in your screenshot:
 
-## Deploy to Render
+1. Click **+ New → Project**. Name it `Workforce Hub`. A project groups services; it does not run the application by itself.
+2. Click **+ New → Web Service**.
+3. Connect your GitHub account if needed and select `damacherlavenu11/workforce_hub`.
+4. Configure the service:
 
-Connect the GitHub repository `damacherlavenu11/workforce_hub`, then create a Blueprint from `render.yaml`. Review it to confirm the service is **Free** and there is no disk or paid database.
+| Field | Value |
+|---|---|
+| Name | `workforce-hub`, or a unique variant |
+| Project | `Workforce Hub` |
+| Branch | `main` |
+| Language / Runtime | `Docker` |
+| Region | Close to your Neon database |
+| Root Directory | Leave empty |
+| Dockerfile Path | `./Dockerfile.free` |
+| Docker Build Context | `.` if shown |
+| Docker Command | Leave empty; use the image's default command |
+| Instance Type / Plan | **Free** |
+| Health Check Path | `/healthz` |
 
-Set these backend environment variables in Render's dashboard:
+Use `Dockerfile.free`, not `Dockerfile` (the latter includes the future paid scanner). Do not add a persistent disk or Render database. You don't need a separate Static Site for this frontend.
 
-| Variable | Value |
+5. Add the environment variables below.
+6. Click **Deploy Web Service** or **Create Web Service**, as shown by Render.
+7. Wait for the Docker build and deployment to show **Live**. Open the assigned `https://...onrender.com` URL.
+
+## 3. Render environment variables
+
+| Key | Value |
 |---|---|
 | `WORKFORCE_ENV` | `production` |
 | `HOSTING_TIER` | `free` |
-| `WORKFORCE_DATA` | `/tmp/workforce` (temporary staging only) |
-| `PUBLIC_ORIGIN` | Exact assigned HTTPS origin, without a path |
-| `DATABASE_URL` | Supabase session-pooler connection string, with SSL |
-| `SUPABASE_URL` | Project HTTPS origin |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-only service-role key |
-| `SUPABASE_BUCKET` | `workforce-documents` |
-| `TRUST_PROXY` | `1` (Render proxy only) |
+| `WORKFORCE_DATA` | `/tmp/workforce` |
+| `DATABASE_URL` | Full direct Neon connection string |
+| `TRUST_PROXY` | `1` |
 
-Leave `DOCUMENT_SCANNER` unset. The UI and API disable uploads. Local staging is never the authoritative database or file store in this mode.
+Render supplies `RENDER_EXTERNAL_URL`; the backend uses it as its HTTPS origin automatically. If you later add a custom domain, set `PUBLIC_ORIGIN` to its exact HTTPS origin with no path.
 
-If Render does not show the public service URL until after creation, set `PUBLIC_ORIGIN` once it is assigned and redeploy. The app intentionally refuses startup with an absent or invalid production origin.
+Leave `DOCUMENT_SCANNER` unset. No `SUPABASE_*` variables are required. If they were entered previously, remove them for this Neon-only deployment. Keep database credentials only in backend environment variables.
 
-## Create the first employer
+Render sets `PORT` automatically, and Gunicorn reads it. `/tmp/workforce` is temporary staging, not your database. The application refuses free production startup without a remote PostgreSQL database.
 
-Render Free does not provide a service shell. Create the account from your local terminal using the hosted database connection; it will appear in the hosted app:
+## 4. Create the first employer account
+
+Render Free does not provide a service shell. Create the account from your local terminal using the **same Neon database URL**. It will then be available in the remote application.
+
+In the repository folder, on macOS zsh:
 
 ```sh
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-# Enter the Supabase session-pooler URL in a hidden prompt, not a command argument.
-read -s 'DATABASE_URL?Supabase database URL: '
+read -s 'DATABASE_URL?Paste the direct Neon database URL: '
 export DATABASE_URL
 python app.py --create-user
 unset DATABASE_URL
 ```
 
-The hidden prompt above is for macOS zsh. Choose role `manager` and enter a new password interactively. The command connects to the hosted database because `DATABASE_URL` is set. Without that variable it creates a local account only. Local demo credentials and data are not deployed automatically.
+If `.venv` does not exist, create it first with `python3 -m venv .venv`.
 
-For forgotten passwords, use the same secure hosted connection setup and run `python app.py --reset-password`; it revokes existing sessions.
+The hidden prompt avoids putting the connection string into command history. Enter your name, email, role **manager**, and a new password of at least 12 characters. Without `DATABASE_URL`, the command would create a local account instead.
 
-## Remote acceptance checks
+Sign in at the Render URL with this email/password. Existing local demo credentials are not automatically copied to Neon.
 
-1. Verify `/healthz` and employer sign-in over HTTPS.
-2. Invite a test employee and activate the invitation once. Verify employee/manager access separation.
-3. Save, submit, return, resubmit and approve a test week.
-4. Confirm Documents shows uploads disabled, and the upload API rejects an authenticated upload with status 503.
-5. Redeploy and verify employee accounts and timesheets persist in Supabase.
-6. Change a password and disable a test employee; old sessions must stop working.
-7. Export a database backup and test restoration in an isolated project before relying on the pilot for live data.
+## 5. Invite and test an employee
 
-CI exercises local SQLite and a real PostgreSQL database, both container builds, secure Gunicorn startup and the paid scanner path. Supabase object API tests use controlled responses; they do not replace verification against your actual private bucket and credentials.
+1. Open **Employees**, enter the employee name/email and click **Create invitation**.
+2. Open the generated HTTPS invitation in an incognito window.
+3. Set the employee password, then sign in with their email.
+4. Save and submit a week as the employee; review and approve it as the employer.
+5. Confirm the employee cannot access other employees' records or manager actions.
+6. Confirm Documents says uploads are disabled.
+7. Redeploy once and confirm the accounts and timesheets remain in Neon.
+8. Check `https://YOUR-SERVICE.onrender.com/healthz`; expected response is `{"status":"ok"}`.
 
-## Backups and future upgrades
+## Troubleshooting
 
-The SQLite disk backup scheduler is disabled for hosted PostgreSQL/object storage. Render's temporary disk is not a backup destination. Free Supabase does not include paid database backup features: regularly export your PostgreSQL database using `pg_dump` or Supabase's documented backup tools to an encrypted, company-controlled location. The `workforce` schema contains account hashes, sessions, audit records and timesheets. Exclude/revoke restored sessions before exposing a restored service.
+- Missing remote database: add `DATABASE_URL` and redeploy.
+- Connection/authentication error: verify you selected the correct Neon branch/database/role, copied the complete direct URL, and retained SSL parameters.
+- Invalid host or production origin: remove an old `PUBLIC_ORIGIN`, or set it to the exact current HTTPS URL.
+- Supabase bucket verification error: remove unused `SUPABASE_*` environment variables in this Neon-only setup.
+- No employer account: create it with the same Neon URL, not a local SQLite database.
+- A slow first visit can be normal: Render Free sleeps after inactivity and Neon compute can also scale to zero.
 
-Documents cannot be uploaded in this pilot. If storage is enabled later, database exports alone will not back up object contents; export the private bucket too. Choose retention and backup schedules for your company before depending on this for live operations.
+## Limits, backups and future upgrades
 
-Keep a single company per deployment. Monitor usage, availability and provider plan settings; upgrade deliberately when needed. The previous paid configuration is preserved as `render.paid.yaml` (with `Dockerfile` and ClamAV) for future review. Applying that file would create paid services and needs a new budget approval.
+Keep this deployment to a small single-company pilot. Free plans have usage quotas and availability limits. Select Free explicitly and do not enable automatic paid upgrades. Monitor usage in both dashboards.
+
+The SQLite archive scheduler is disabled for hosted PostgreSQL. Regularly export the private `workforce` schema using Neon/PostgreSQL backup tools such as `pg_dump`, store exports encrypted, and test restoration into an isolated database. Exports include authentication hashes and private timesheets. Revoke restored sessions before opening a restored deployment.
+
+A database backup will not cover future object-store file contents. Documents remain disabled now; add private storage plus scanning and a separate file backup strategy when enabling them. Invitation sharing remains manual; automatic email delivery is not integrated.
+
+The previous paid configuration is preserved in `render.paid.yaml` for later review. Applying it would create paid services and requires a fresh budget approval.
+
+References:
+
+- https://neon.com/docs/get-started-with-neon/connect-neon
+- https://render.com/docs/web-services
+- https://render.com/docs/docker
+- https://render.com/docs/environment-variables
+- https://render.com/docs/free

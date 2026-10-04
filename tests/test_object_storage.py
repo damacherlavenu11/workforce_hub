@@ -61,3 +61,11 @@ class StorageTests(unittest.TestCase):
         with patch.object(app,'DATABASE_URL',''):
             with self.assertRaisesRegex(RuntimeError,'remote PostgreSQL'):
                 app.create_app({'TESTING':True,'PRODUCTION':True,'PUBLIC_ORIGIN':'https://workforce.example','HOSTING_TIER':'free'})
+
+    def test_neon_only_free_mode_and_render_origin(self):
+        import os
+        with patch.object(app,'DATABASE_URL','postgresql://example'), patch('app.init'), patch.dict(os.environ,{'RENDER_EXTERNAL_URL':'https://workforce-test.onrender.com','PUBLIC_ORIGIN':''}):
+            server=app.create_app({'TESTING':True,'PRODUCTION':True,'HOSTING_TIER':'free'})
+            self.assertIsNone(server.config['OBJECT_STORAGE'])
+            self.assertFalse(server.config['ALLOW_UNSCANNED_UPLOADS'])
+            self.assertEqual(server.config['PUBLIC_ORIGIN'],'https://workforce-test.onrender.com')

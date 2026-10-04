@@ -16,15 +16,7 @@ services:
         value: free
       - key: WORKFORCE_DATA
         value: /tmp/workforce
-      - key: PUBLIC_ORIGIN
-        sync: false
       - key: DATABASE_URL
         sync: false
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: SUPABASE_BUCKET
-        value: workforce-documents
       - key: TRUST_PROXY
         value: "1"

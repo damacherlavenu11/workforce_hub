@@ -109,7 +109,7 @@ def create_app(config=None):
     if os.environ.get('SUPABASE_URL'):
         remote_storage = SupabaseStorage(os.environ['SUPABASE_URL'], os.environ.get('SUPABASE_SERVICE_ROLE_KEY', ''), os.environ.get('SUPABASE_BUCKET', 'workforce-documents'))
     production = os.environ.get('WORKFORCE_ENV') == 'production'
-    origin = os.environ.get('PUBLIC_ORIGIN', '').rstrip('/')
+    origin = (os.environ.get('PUBLIC_ORIGIN') or os.environ.get('RENDER_EXTERNAL_URL', '')).rstrip('/')
     server.config.update(MAX_CONTENT_LENGTH=MAX_UPLOAD, PRODUCTION=production, PUBLIC_ORIGIN=origin,
                          DOCUMENT_SCANNER=os.environ.get('DOCUMENT_SCANNER', ''),
                          ALLOW_UNSCANNED_UPLOADS=not production,
@@ -122,8 +122,11 @@ def create_app(config=None):
         parsed = urlsplit(server.config['PUBLIC_ORIGIN'])
         if parsed.scheme != 'https' or not parsed.netloc or parsed.path or parsed.query or parsed.fragment or parsed.username:
             raise RuntimeError('Production requires PUBLIC_ORIGIN=https://your-domain without a path.')
-        if server.config['HOSTING_TIER'] == 'free' and (not DATABASE_URL or not server.config['OBJECT_STORAGE']):
-            raise RuntimeError('Free hosting requires a remote PostgreSQL database and private Supabase storage.')
+        if server.config['HOSTING_TIER'] == 'free':
+            if not DATABASE_URL:
+                raise RuntimeError('Free hosting requires a remote PostgreSQL database.')
+            if server.config['DOCUMENT_SCANNER'] and not server.config['OBJECT_STORAGE']:
+                raise RuntimeError('Free hosting uploads require private remote document storage.')
         if not DATABASE_URL and not os.environ.get('WORKFORCE_DATA') and not server.config.get('TESTING'):
             raise RuntimeError('Production requires WORKFORCE_DATA pointing to persistent storage.')
     # Set only behind a trusted reverse proxy, with direct backend access blocked.
