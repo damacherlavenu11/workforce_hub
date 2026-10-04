@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends clamav clamav-f
     && printf 'DatabaseOwner clamav\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\nChecks 12\nForeground true\n' > /etc/clamav/freshclam.conf
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py wsgi.py gunicorn.conf.py ./
+COPY app.py persistence.py object_storage.py wsgi.py gunicorn.conf.py ./
 COPY static ./static
 COPY scripts ./scripts
 ENTRYPOINT ["sh", "/app/scripts/entrypoint.sh"]

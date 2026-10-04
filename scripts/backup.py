@@ -14,6 +14,8 @@ import app
 
 
 def backup(destination):
+    if app.DATABASE_URL:
+        raise ValueError('Use pg_dump and a private object export for hosted PostgreSQL backups.')
     destination = Path(destination).resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as temp:

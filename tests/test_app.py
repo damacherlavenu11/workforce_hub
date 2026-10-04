@@ -7,6 +7,9 @@ import app
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); app.DATA=Path(self.temp.name)
+        if app.DATABASE_URL:
+            app.init()
+            with app.db() as c:c.execute('TRUNCATE users, sessions, sheets, documents, invitations, audit, rate_limits RESTART IDENTITY CASCADE')
         self.server=app.create_app({'TESTING':True})
         self.client=self.server.test_client(use_cookies=False)
         app.create_user('Employee','employee@example.com','employee','test-password-123')
@@ -161,6 +164,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.request('/api/login',{'email':'employee@example.com','password':'new-password-123'})[0],200)
 
     def test_backup_contains_consistent_data_and_uploads(self):
+        if app.DATABASE_URL:self.skipTest('SQLite archives are not PostgreSQL backups.')
         import tarfile,sqlite3
         from scripts.backup import backup
         employee=self.login('employee@example.com')

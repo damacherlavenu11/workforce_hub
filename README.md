@@ -26,6 +26,8 @@ Employees save seven daily hours for Monday-starting weeks, submit them, and vie
 
 Employees can only view their own data. Managers can view all records within this single-company installation. This deployment is not a multi-company SaaS: use a separate installation for each company until tenant isolation is implemented.
 
+For the free hosted pilot, document uploads are disabled until malware scanning is available. Existing authenticated download routes remain protected.
+
 Both roles can change passwords from **Account settings**. For forgotten passwords, an authorized deployment operator runs:
 
 ```sh
@@ -38,8 +40,8 @@ The password prompt hides input and all sessions for that account are revoked. E
 
 - Frontend: responsive HTML, CSS and JavaScript, hosted at `/`.
 - Backend: Flask JSON endpoints at `/api/*`, run by Gunicorn in production.
-- Data: SQLite with write-ahead logging and transactional workflows, on a persistent disk.
-- Files: private randomized storage paths, authenticated downloads, content validation and required malware scanning in production.
+- Data: local SQLite, or hosted PostgreSQL in a private schema for the free pilot.
+- Files: local private paths or private Supabase objects, with authenticated downloads. Production uploads require malware scanning.
 - Deployment: Docker, Render Blueprint and GitHub Actions checks.
 
 The frontend and backend are both remote after deployment and share one HTTPS origin. Separate services/domains are unnecessary for this initial deployment and would require additional cookie/CORS configuration.
@@ -51,7 +53,7 @@ python -m unittest discover -s tests -v
 node --check static/app.js
 ```
 
-Tests cover onboarding, employee isolation, approvals, malformed requests, login limits, secure cookies, password upgrades/resets, offboarding, scanner failures, and a backup restore. Scanner unit tests mock the process result; the CI container check separately exercises a real ClamAV executable using a local test signature.
+Tests cover onboarding, employee isolation, approvals, malformed requests, login limits, secure cookies, password upgrades/resets, offboarding, scanner failures, local backup restoration, remote object authorization and private-bucket validation. CI also runs workflow tests against PostgreSQL. Scanner unit tests mock the process result; the CI container check separately exercises a real ClamAV executable using a local test signature.
 
 ## Deploy and operate
 
@@ -59,4 +61,6 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the Render configuration, estimated costs
 
 Production adds HTTPS enforcement, Secure/HttpOnly/SameSite cookies, hashed session tokens, CSRF/origin validation, database-backed request limits, audit events and security headers. Gunicorn uses one worker and four threads; scans are serialized to bound memory. Do not increase worker or instance counts without moving shared storage and scan coordination out of the process.
 
-SQLite records, uploads and daily archives live under `WORKFORCE_DATA`; local `data/` is ignored by Git. Monitor disk usage and logs, review access periodically, set company retention rules, and maintain an independent encrypted backup export. Antivirus reduces risk but does not guarantee every document is safe. No public upload directory is exposed.
+The default `render.yaml` selects free Render hosting with Supabase persistence. The prior paid configuration is in `render.paid.yaml`. Free hosting can sleep or pause and requires manual backup exports.
+
+Local SQLite records and uploads live under `WORKFORCE_DATA`; local `data/` is ignored by Git. With `DATABASE_URL` configured, accounts and timesheets use PostgreSQL. With Supabase storage configured, committed documents use the private bucket; the temporary app filesystem is never the authoritative remote store. The local SQLite backup scheduler runs only for the paid/local storage mode. Monitor disk usage and logs, review access periodically, set company retention rules, and maintain an independent encrypted backup export. Antivirus reduces risk but does not guarantee every document is safe. No public upload directory is exposed.

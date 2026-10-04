@@ -1,28 +1,30 @@
-# Live single-company deployment. This creates a PAID 4 GB service.
-# Review pricing and connect your account before applying this Blueprint.
+# Free pilot: remote PostgreSQL persistence, no paid disk, uploads disabled.
 services:
   - type: web
     name: workforce-hub
     runtime: docker
-    plan: pro
+    plan: free
     region: ohio
-    numInstances: 1
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.free
     dockerContext: .
     healthCheckPath: /healthz
     autoDeployTrigger: checksPass
-    disk:
-      name: workforce-data
-      mountPath: /var/data
-      sizeGB: 10
     envVars:
       - key: WORKFORCE_ENV
         value: production
+      - key: HOSTING_TIER
+        value: free
       - key: WORKFORCE_DATA
-        value: /var/data
+        value: /tmp/workforce
       - key: PUBLIC_ORIGIN
         sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: workforce-documents
       - key: TRUST_PROXY
         value: "1"
-      - key: DOCUMENT_SCANNER
-        value: "clamscan --no-summary --fail-if-cvd-older-than=2 --alert-exceeds-max=yes --max-filesize=11M --max-scansize=100M --max-recursion=16 --max-files=1000"

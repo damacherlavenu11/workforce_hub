@@ -1,64 +1,89 @@
-# Render deployment: Workforce Hub
+# Free pilot deployment
 
-Status: deployment configuration prepared. No Render resources have been created by this repository. Account access, a reviewed monthly budget and remote validation are required before live employee use.
+The default `render.yaml` now uses **Render Free**, with no paid disk. Accounts and timesheets are stored in **Supabase PostgreSQL**, outside Render's temporary filesystem. A private Supabase bucket is configured for future document storage; **uploads remain disabled until a malware scanner is available**, as requested.
 
-## Proposed services and costs
+No cloud resources have been created. Connect your Render and Supabase accounts to deploy. Choose Free plans; this configuration does not provision paid resources or automatically upgrade them.
 
-`render.yaml` defines one Docker web service named `workforce-hub`, one instance, and a 10 GB persistent disk. Both the frontend and API are served by this service using Gunicorn, behind Render's HTTPS proxy.
+## Free-tier limits
 
-The service uses Render's `pro` compute tier (4 GB RAM) because the bundled ClamAV scanner requires substantial memory. Estimated compute is $85/month plus $2.50/month for a 10 GB disk, approximately **$87.50/month**, excluding workspace subscription changes, extra bandwidth, taxes and any future email service. Verify the current total in Render before applying the Blueprint:
+As verified when preparing this configuration:
 
-- https://render.com/pricing
-- https://docs.clamav.net/ (ClamAV recommends roughly 3–4 GiB RAM)
+- Render Free sleeps after 15 minutes without inbound traffic, so the first visit may take longer. It has an ephemeral filesystem; the application refuses to start in free production mode without remote persistence.
+- Supabase Free includes a 500 MB database and 1 GB file storage. Projects with low activity can pause after seven days and require restoration from the dashboard.
+- Free hosting does not offer the uptime guarantees or capacity of a paid deployment. Keep this to a small pilot and monitor provider quotas.
+- Automatic email delivery is not configured; invitations are shared manually.
+- The free app image excludes ClamAV. Content checks remain implemented, but production uploads stay disabled instead of silently skipping malware scanning.
 
-This differs from the earlier ~$7 prototype estimate: that estimate did not include a properly sized malware scanner or backup storage. Do not apply the paid Blueprint until the service budget is accepted. A smaller service with an independently hosted scanner is another option, but requires access to that scanner and a new cost estimate.
+References:
 
-Free Render services have ephemeral filesystems and cannot preserve this application's SQLite database and documents across deployments. Never store live employee data there.
+- https://render.com/docs/free
+- https://supabase.com/docs/guides/platform/billing-on-supabase
+- https://supabase.com/docs/guides/platform/free-project-pausing
 
-## Account setup and deploy
+## Create the Supabase project
 
-1. Sign in to https://dashboard.render.com and connect the GitHub repository `damacherlavenu11/workforce_hub`.
-2. Create a Blueprint from `render.yaml`; review the paid service and disk before accepting.
-3. Set `PUBLIC_ORIGIN` to the exact HTTPS origin Render assigns, for example `https://your-workforce-service.onrender.com` (no trailing path). If the URL is not available until service creation, set it in the service environment after creation and redeploy. The application intentionally refuses startup with an absent or invalid production origin.
-4. Keep `WORKFORCE_DATA=/var/data`, `WORKFORCE_ENV=production` and `TRUST_PROXY=1`. Trust proxy headers only when the backend is reached through Render's proxy. Keep the `DOCUMENT_SCANNER` value from the Blueprint.
-5. Wait for GitHub checks and the deployment to pass. Antivirus definitions update in the background; uploads fail closed until valid, fresh signatures exist. Check FreshClam logs for update failures; do not disable scanning to force uploads through.
-6. In the Render service's shell, create your first employer account with `gosu workforce python app.py --create-user`, using role `manager`. Enter a new strong password interactively; do not put passwords in commands, source files, screenshots or logs.
-7. Open the HTTPS URL, sign in, and create a test employee invitation. Complete the checks below before onboarding real employees.
+1. In your own Supabase account, create a project on the **Free** plan, using a strong database password. Choose a nearby region.
+2. Create a **private** Storage bucket named `workforce-documents`. Do not mark it public and do not add public access policies. The backend verifies the private setting before startup.
+3. Copy the IPv4-compatible **session pooler** PostgreSQL connection string (port 5432) from the Connect dialog. URL-encode the database password and retain `sslmode=require`.
+4. Record the project URL and **server-only service-role key**. These are backend environment variables; never put them into `static/app.js`, Git, screenshots or chat messages.
+5. The app creates tables in a private `workforce` database schema and revokes public/anonymous schema access. Do not add this schema to Supabase's exposed Data API schemas. Authentication remains in our backend; Supabase Auth signup is not used.
 
-Existing local accounts and uploads do not automatically transfer. Start with a new employer on the host, or use a separately reviewed encrypted migration. Do not upload the local database to GitHub.
+## Deploy to Render
 
-## Required remote verification
+Connect the GitHub repository `damacherlavenu11/workforce_hub`, then create a Blueprint from `render.yaml`. Review it to confirm the service is **Free** and there is no disk or paid database.
 
-- `/healthz` returns `{ "status": "ok" }`; set alerts for service outages and errors. Health checks verify the database connection, not scanner readiness.
-- Employer login works over HTTPS; the session cookie has Secure, HttpOnly and SameSite=Strict attributes.
-- Employee invitation activation succeeds once; the employee can only see their own records and cannot access manager endpoints.
-- Save, submit, return, resubmit and approve a test week. Approved weeks cannot be edited.
-- Upload and download a harmless test document, and verify a second employee cannot download it.
-- Verify ClamAV rejects the standard EICAR antivirus test file, using a designated test account. Never include genuine sensitive documents in antivirus tests.
-- Change a password and verify old sessions are revoked. Disable a test employee and verify access ends.
-- Redeploy once and confirm test accounts, sheets and files persist.
-- Verify daily backup creation; download a backup securely and restore it into an isolated test installation.
+Set these backend environment variables in Render's dashboard:
 
-Container builds and real antivirus tests must pass on GitHub before the service is accepted. This workspace does not have Docker or a connected Render account, so these remote checks cannot be replaced by the local mocked scanner tests.
+| Variable | Value |
+|---|---|
+| `WORKFORCE_ENV` | `production` |
+| `HOSTING_TIER` | `free` |
+| `WORKFORCE_DATA` | `/tmp/workforce` (temporary staging only) |
+| `PUBLIC_ORIGIN` | Exact assigned HTTPS origin, without a path |
+| `DATABASE_URL` | Supabase session-pooler connection string, with SSL |
+| `SUPABASE_URL` | Project HTTPS origin |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only service-role key |
+| `SUPABASE_BUCKET` | `workforce-documents` |
+| `TRUST_PROXY` | `1` (Render proxy only) |
 
-## Backups and recovery
+Leave `DOCUMENT_SCANNER` unset. The UI and API disable uploads. Local staging is never the authoritative database or file store in this mode.
 
-The single Gunicorn worker runs a backup scheduler. It creates a coherent archive of SQLite and committed immutable files at startup if due, checks hourly, and retains daily archives for seven days under `/var/data/backups/`. Creation failures are logged and must alert an operator. Archives contain authentication hashes and private employee documents: restrict access and encrypt exports.
+If Render does not show the public service URL until after creation, set `PUBLIC_ORIGIN` once it is assigned and redeploy. The app intentionally refuses startup with an absent or invalid production origin.
 
-Render takes encrypted daily disk snapshots. Consistent archives can be recovered from those snapshots, but this is not an independent backup strategy. Export archives regularly to a company-controlled encrypted backup destination. Capacity must cover live uploads plus seven archive copies. Monitor disk space; increase the disk before it fills. Render snapshots alone are not a substitute for testing SQLite recovery.
+## Create the first employer
 
-Manual archive:
+Render Free does not provide a service shell. Create the account from your local terminal using the hosted database connection; it will appear in the hosted app:
 
 ```sh
-gosu workforce python scripts/backup.py --output /var/data/backups/manual-backup.tar.gz
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+# Enter the Supabase session-pooler URL in a hidden prompt, not a command argument.
+read -s 'DATABASE_URL?Supabase database URL: '
+export DATABASE_URL
+python app.py --create-user
+unset DATABASE_URL
 ```
 
-To restore, use an isolated installation first: stop writes, preserve its current data, extract an archive you trust into an empty data directory, check `PRAGMA integrity_check` and referenced files, then start the app with `WORKFORCE_DATA` pointing there. Invalidate all restored sessions and invitations before opening a restored production service. For production recovery, stop the service and take an emergency backup first; never overwrite live data while requests are running.
+The hidden prompt above is for macOS zsh. Choose role `manager` and enter a new password interactively. The command connects to the hosted database because `DATABASE_URL` is set. Without that variable it creates a local account only. Local demo credentials and data are not deployed automatically.
 
-Do not publicly expose the disk or archive directory. The application routes never serve these paths.
+For forgotten passwords, use the same secure hosted connection setup and run `python app.py --reset-password`; it revokes existing sessions.
 
-## Operating boundaries
+## Remote acceptance checks
 
-This is a small single-company, single-instance deployment. Horizontal scaling requires moving the database to PostgreSQL and files to private object storage and adapting the persistence layer. Employer/manager roles currently have company-wide record access. Establish employee consent, authorized manager access, document retention and support procedures for your company before inviting real users.
+1. Verify `/healthz` and employer sign-in over HTTPS.
+2. Invite a test employee and activate the invitation once. Verify employee/manager access separation.
+3. Save, submit, return, resubmit and approve a test week.
+4. Confirm Documents shows uploads disabled, and the upload API rejects an authenticated upload with status 503.
+5. Redeploy and verify employee accounts and timesheets persist in Supabase.
+6. Change a password and disable a test employee; old sessions must stop working.
+7. Export a database backup and test restoration in an isolated project before relying on the pilot for live data.
 
-Invitation emails are manual. Integrating automatic delivery and self-service email password recovery requires a verified sending domain and provider configuration; do not send shared plaintext passwords.
+CI exercises local SQLite and a real PostgreSQL database, both container builds, secure Gunicorn startup and the paid scanner path. Supabase object API tests use controlled responses; they do not replace verification against your actual private bucket and credentials.
+
+## Backups and future upgrades
+
+The SQLite disk backup scheduler is disabled for hosted PostgreSQL/object storage. Render's temporary disk is not a backup destination. Free Supabase does not include paid database backup features: regularly export your PostgreSQL database using `pg_dump` or Supabase's documented backup tools to an encrypted, company-controlled location. The `workforce` schema contains account hashes, sessions, audit records and timesheets. Exclude/revoke restored sessions before exposing a restored service.
+
+Documents cannot be uploaded in this pilot. If storage is enabled later, database exports alone will not back up object contents; export the private bucket too. Choose retention and backup schedules for your company before depending on this for live operations.
+
+Keep a single company per deployment. Monitor usage, availability and provider plan settings; upgrade deliberately when needed. The previous paid configuration is preserved as `render.paid.yaml` (with `Dockerfile` and ClamAV) for future review. Applying that file would create paid services and needs a new budget approval.

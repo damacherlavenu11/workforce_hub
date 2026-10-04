@@ -24,19 +24,19 @@ from urllib.parse import unquote, urlsplit
 from flask import Flask, g, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
+import persistence
+from object_storage import SupabaseStorage, StorageUnavailable
 
 ROOT = Path(__file__).parent
 DATA = Path(os.environ.get('WORKFORCE_DATA', ROOT / 'data'))
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 MAX_UPLOAD = 10 * 1024 * 1024
 SESSION_SECONDS = 8 * 3600
 SCAN_LOCK = threading.BoundedSemaphore(1)
 
 
 def db():
-    connection = sqlite3.connect(DATA / 'hub.sqlite3', timeout=15)
-    connection.row_factory = sqlite3.Row
-    connection.execute('PRAGMA foreign_keys=ON')
-    return connection
+    return persistence.connect(DATABASE_URL, DATA / 'hub.sqlite3')
 
 
 def password_hash(password, salt):
@@ -51,6 +51,9 @@ def init():
     DATA.mkdir(exist_ok=True, parents=True)
     (DATA / 'uploads').mkdir(exist_ok=True)
     with db() as c:
+        if DATABASE_URL:
+            persistence.init_postgres(c)
+            return
         c.execute('PRAGMA journal_mode=WAL')
         c.executescript('''
         CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, role TEXT NOT NULL CHECK(role IN ('employee','manager')), salt TEXT NOT NULL, password TEXT NOT NULL);
@@ -102,12 +105,15 @@ def audit(c, actor, action, target):
 
 def create_app(config=None):
     server = Flask(__name__, static_folder=None)
+    remote_storage = None
+    if os.environ.get('SUPABASE_URL'):
+        remote_storage = SupabaseStorage(os.environ['SUPABASE_URL'], os.environ.get('SUPABASE_SERVICE_ROLE_KEY', ''), os.environ.get('SUPABASE_BUCKET', 'workforce-documents'))
     production = os.environ.get('WORKFORCE_ENV') == 'production'
     origin = os.environ.get('PUBLIC_ORIGIN', '').rstrip('/')
     server.config.update(MAX_CONTENT_LENGTH=MAX_UPLOAD, PRODUCTION=production, PUBLIC_ORIGIN=origin,
                          DOCUMENT_SCANNER=os.environ.get('DOCUMENT_SCANNER', ''),
                          ALLOW_UNSCANNED_UPLOADS=not production,
-                         SESSION_COOKIE_SECURE=production)
+                         SESSION_COOKIE_SECURE=production, OBJECT_STORAGE=remote_storage, HOSTING_TIER=os.environ.get('HOSTING_TIER', 'paid'))
     if config:
         server.config.update(config)
     if server.config['PRODUCTION']:
@@ -116,12 +122,16 @@ def create_app(config=None):
         parsed = urlsplit(server.config['PUBLIC_ORIGIN'])
         if parsed.scheme != 'https' or not parsed.netloc or parsed.path or parsed.query or parsed.fragment or parsed.username:
             raise RuntimeError('Production requires PUBLIC_ORIGIN=https://your-domain without a path.')
-        if not os.environ.get('WORKFORCE_DATA') and not server.config.get('TESTING'):
+        if server.config['HOSTING_TIER'] == 'free' and (not DATABASE_URL or not server.config['OBJECT_STORAGE']):
+            raise RuntimeError('Free hosting requires a remote PostgreSQL database and private Supabase storage.')
+        if not DATABASE_URL and not os.environ.get('WORKFORCE_DATA') and not server.config.get('TESTING'):
             raise RuntimeError('Production requires WORKFORCE_DATA pointing to persistent storage.')
     # Set only behind a trusted reverse proxy, with direct backend access blocked.
     if os.environ.get('TRUST_PROXY') == '1':
         server.wsgi_app = ProxyFix(server.wsgi_app, x_for=1, x_proto=1)
     init()
+    if server.config['OBJECT_STORAGE']:
+        server.config['OBJECT_STORAGE'].verify_private()
 
     def fail(message, status=400):
         return jsonify(error=message), status
@@ -141,7 +151,7 @@ def create_app(config=None):
             row = c.execute('SELECT count FROM rate_limits WHERE key=?', (key,)).fetchone()
             if row and row['count'] >= limit:
                 return True
-            c.execute('INSERT INTO rate_limits VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1', (key, now + seconds))
+            c.execute('INSERT INTO rate_limits VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=rate_limits.count+1', (key, now + seconds))
         return False
 
     def protect(role=None):
@@ -196,6 +206,13 @@ def create_app(config=None):
     @server.errorhandler(sqlite3.IntegrityError)
     def conflict(error):
         return fail('This record already exists.', 409)
+
+    if persistence.psycopg:
+        server.register_error_handler(persistence.psycopg.IntegrityError, conflict)
+
+    @server.errorhandler(StorageUnavailable)
+    def storage_error(error):
+        return fail('Document storage is temporarily unavailable. Please try again.', 503)
 
     @server.errorhandler(HTTPException)
     def http_error(error):
@@ -369,7 +386,7 @@ def create_app(config=None):
             people = [dict(r) for r in c.execute('SELECT id,name FROM users' + ('' if manager else ' WHERE id=?'), () if manager else (g.user['id'],))]
         for sheet in sheets:
             sheet['entries'] = json.loads(sheet['entries'])
-        return jsonify(sheets=sheets, documents=documents, people=people)
+        return jsonify(sheets=sheets, documents=documents, people=people, uploadsEnabled=bool(server.config['DOCUMENT_SCANNER'] or server.config['ALLOW_UNSCANNED_UPLOADS']))
 
     @server.post('/api/sheets')
     @protect('employee')
@@ -449,6 +466,9 @@ def create_app(config=None):
         storage = secrets.token_hex(24)
         target = DATA / 'uploads' / storage
         target.write_bytes(raw)
+        object_store = server.config['OBJECT_STORAGE']
+        remote_uploaded = False
+        committed = False
         try:
             if scanner:
                 if not SCAN_LOCK.acquire(blocking=False):
@@ -462,14 +482,22 @@ def create_app(config=None):
                         return fail('The document did not pass security scanning.', 400 if scan.returncode == 1 else 503)
                 finally:
                     SCAN_LOCK.release()
+            if object_store:
+                object_store.put(storage, raw)
+                remote_uploaded = True
             with db() as c:
                 ident = c.execute('INSERT INTO documents(user_id,name,storage,created) VALUES(?,?,?,?)', (g.user['id'], name, storage, dt.date.today().isoformat())).lastrowid
                 audit(c, g.user['id'], 'document.uploaded', ident)
-            storage = None
+            committed = True
             return jsonify(ok=True), 201
         finally:
-            if storage:
+            if object_store or not committed:
                 target.unlink(missing_ok=True)
+            if remote_uploaded and not committed:
+                try:
+                    object_store.delete(storage)
+                except StorageUnavailable:
+                    server.logger.error('An unreferenced document object requires cleanup: %s', storage)
 
     @server.get('/api/documents/<int:ident>')
     @protect()
@@ -479,6 +507,9 @@ def create_app(config=None):
             if not document or (g.user['role'] != 'manager' and document['user_id'] != g.user['id']):
                 return fail('Document not found.', 404)
             audit(c, g.user['id'], 'document.downloaded', ident)
+        if server.config['OBJECT_STORAGE']:
+            contents = server.config['OBJECT_STORAGE'].get(document['storage'])
+            return send_file(io.BytesIO(contents), mimetype='application/octet-stream', as_attachment=True, download_name=document['name'])
         target = DATA / 'uploads' / document['storage']
         if not target.is_file():
             return fail('Document is unavailable. Contact your employer.', 404)

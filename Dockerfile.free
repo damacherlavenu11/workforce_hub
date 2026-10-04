@@ -1,0 +1,11 @@
+FROM python:3.12-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 WORKFORCE_DATA=/tmp/workforce
+WORKDIR /app
+RUN useradd --create-home --uid 10001 workforce
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py persistence.py object_storage.py wsgi.py gunicorn.conf.py ./
+COPY static ./static
+COPY scripts ./scripts
+USER workforce
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "wsgi:application"]
